@@ -1,0 +1,157 @@
+# Auto-Setup untuk Repository Flutter Baru
+# Workflow ini otomatis mendeteksi dan setup CI/CD untuk repo Flutter baru
+# Dijalankan setiap jam untuk mengecek repo baru
+
+name: Auto Setup Flutter Repos
+
+on:
+  # Run setiap jam
+  schedule:
+    - cron: '0 * * * *'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Dry run (tidak ada perubahan)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  detect-and-setup:
+    name: Detect Flutter Repos
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
+        run: |
+          gh auth status
+
+      - name: Get all user repositories
+        id: get-repos
+        run: |
+          echo "Fetching repositories..."
+          
+          # Get all repos owned by user
+          REPOS=$(gh repo list --limit 100 --json nameWithOwner,isPrivate,updatedAt --jq '.[] | @base64')
+          
+          echo "repos<<EOF" >> $GITHUB_OUTPUT
+          echo "$REPOS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Check and Setup Flutter Repos
+        env:
+          REPOS_DATA: ${{ steps.get-repos.outputs.repos }}
+          DRY_RUN: ${{ github.event.inputs.dry-run }}
+        run: |
+          echo "Checking repositories for Flutter projects..."
+          echo ""
+          
+          SETUP_COUNT=0
+          
+          while IFS= read -r repo_data; do
+            if [ -z "$repo_data" ]; then continue; fi
+            
+            # Decode repo data
+            REPO_INFO=$(echo "$repo_data" | base64 -d)
+            REPO_NAME=$(echo "$REPO_INFO" | jq -r '.nameWithOwner')
+            
+            echo "Checking: $REPO_NAME"
+            
+            # Check if pubspec.yaml exists
+            HAS_PUBSPEC=$(gh api "repos/$REPO_NAME/contents/pubspec.yaml" 2>/dev/null && echo "true" || echo "false")
+            
+            if [ "$HAS_PUBSPEC" != "true" ]; then
+              echo "  └─ Not a Flutter project, skipping"
+              continue
+            fi
+            
+            # Check if workflow already exists
+            HAS_WORKFLOW=$(gh api "repos/$REPO_NAME/contents/.github/workflows/flutter-apk-release.yml" 2>/dev/null && echo "true" || echo "false")
+            
+            if [ "$HAS_WORKFLOW" = "true" ]; then
+              echo "  └─ Already has workflow, skipping"
+              continue
+            fi
+            
+            echo "  └─ Flutter project found! Setting up CI/CD..."
+            
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "  └─ [DRY RUN] Would add workflow"
+              continue
+            fi
+            
+            # Get default branch
+            DEFAULT_BRANCH=$(gh repo view "$REPO_NAME" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || echo "main")
+            
+            # Create workflow content
+            WORKFLOW_CONTENT=$(cat << 'WORKFLOW_EOF'
+name: Flutter APK Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Tipe build'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+          - profile
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  call-builder:
+    name: Build APK
+    uses: ohmyno17-cmyk/flutter-apk-app/.github/workflows/flutter-apk-builder.yml@main
+    with:
+      flutter-version: '3.24.0'
+      build-type: ${{ github.event.inputs.build_type || 'release' }}
+    secrets: inherit
+WORKFLOW_EOF
+)
+
+            # Encode to base64
+            CONTENT_BASE64=$(echo "$WORKFLOW_CONTENT" | base64 -w 0)
+            
+            # Create workflow file
+            gh api --method PUT "repos/$REPO_NAME/contents/.github/workflows/flutter-apk-release.yml" \
+              -f message="Auto-setup: Add Flutter CI/CD workflow" \
+              -f content="$CONTENT_BASE64" \
+              -f branch="$DEFAULT_BRANCH" 2>/dev/null
+            
+            if [ $? -eq 0 ]; then
+              echo "  └─ ✓ Workflow added successfully!"
+              ((SETUP_COUNT++))
+            else
+              echo "  └─ ✗ Failed to add workflow"
+            fi
+            
+          done <<< "$REPOS_DATA"
+          
+          echo ""
+          echo "══════════════════════════════════════"
+          echo "Total repos setup: $SETUP_COUNT"
+          echo "══════════════════════════════════════"
+
+      - name: Summary
+        run: |
+          echo "## Setup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Checked all repositories for Flutter projects." >> $GITHUB_STEP_SUMMARY
+          echo "New Flutter repos automatically got CI/CD workflow." >> $GITHUB_STEP_SUMMARY
