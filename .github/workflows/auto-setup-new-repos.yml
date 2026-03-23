@@ -5,10 +5,6 @@
 name: Auto Setup Flutter Repos
 
 on:
-  # Run setiap jam
-  schedule:
-    - cron: '0 * * * *'
-  
   # Manual trigger
   workflow_dispatch:
     inputs:
@@ -17,6 +13,10 @@ on:
         required: false
         default: false
         type: boolean
+  
+  # Run setiap jam
+  schedule:
+    - cron: '0 * * * *'
 
 jobs:
   detect-and-setup:
