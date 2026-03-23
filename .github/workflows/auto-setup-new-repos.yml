@@ -15,27 +15,25 @@ on:
       dry-run:
         description: 'Dry run (tidak ada perubahan)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
-
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   detect-and-setup:
     name: Detect Flutter Repos
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      repositories: read
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup GitHub CLI
-        run: |
-          gh auth status
-
       - name: Get all user repositories
         id: get-repos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Fetching repositories..."
           
@@ -50,6 +48,7 @@ jobs:
         env:
           REPOS_DATA: ${{ steps.get-repos.outputs.repos }}
           DRY_RUN: ${{ github.event.inputs.dry-run }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Checking repositories for Flutter projects..."
           echo ""
@@ -92,16 +91,15 @@ jobs:
             DEFAULT_BRANCH=$(gh repo view "$REPO_NAME" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || echo "main")
             
             # Create workflow content
-            WORKFLOW_CONTENT=$(cat << 'WORKFLOW_EOF'
-name: Flutter APK Release
+            WORKFLOW_CONTENT='name: Flutter APK Release
 
 on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Tipe build'
+        description: Tipe build
         required: true
-        default: 'release'
+        default: release
         type: choice
         options:
           - release
@@ -109,7 +107,7 @@ on:
           - profile
   push:
     tags:
-      - 'v*'
+      - "v*"
   pull_request:
     branches:
       - main
@@ -120,11 +118,10 @@ jobs:
     name: Build APK
     uses: ohmyno17-cmyk/flutter-apk-app/.github/workflows/flutter-apk-builder.yml@main
     with:
-      flutter-version: '3.24.0'
-      build-type: ${{ github.event.inputs.build_type || 'release' }}
+      flutter-version: "3.24.0"
+      build-type: ${{ github.event.inputs.build_type || "release" }}
     secrets: inherit
-WORKFLOW_EOF
-)
+'
 
             # Encode to base64
             CONTENT_BASE64=$(echo "$WORKFLOW_CONTENT" | base64 -w 0)
