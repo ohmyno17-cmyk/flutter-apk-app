@@ -5,16 +5,7 @@
 name: Auto Setup Flutter Repos
 
 on:
-  # Manual trigger
   workflow_dispatch:
-    inputs:
-      dry-run:
-        description: 'Dry run (tidak ada perubahan)'
-        required: false
-        default: false
-        type: boolean
-  
-  # Run setiap jam
   schedule:
     - cron: '0 * * * *'
 
