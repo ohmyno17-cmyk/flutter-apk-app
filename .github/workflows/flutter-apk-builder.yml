@@ -83,47 +83,30 @@ jobs:
       - name: Analyze Code
         run: flutter analyze --no-fatal-infos || true
 
-      - name: Decode Keystore
-        if: inputs.build-type == 'release' && secrets.KEYSTORE_BASE64 != ''
+      - name: Setup Signing for Release Build
+        if: inputs.build-type == 'release'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > android/app/keystore.jks
-            echo "Keystore decoded successfully"
-          fi
-
-      - name: Create key.properties
-        if: inputs.build-type == 'release' && secrets.KEYSTORE_PASSWORD != ''
-        env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_PASSWORD" ]; then
+          # Check if secrets are available
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            echo "Setting up signing..."
+            echo "$KEYSTORE_BASE64" | base64 --decode > android/app/keystore.jks
+            
             cat > android/key.properties << EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD
           keyAlias=$KEY_ALIAS
           storeFile=keystore.jks
           EOF
-            echo "key.properties created"
-          fi
-
-      - name: Update build.gradle for signing
-        if: inputs.build-type == 'release'
-        run: |
-          # Check if signing config already exists
-          if ! grep -q "signingConfigs" android/app/build.gradle; then
-            # Add signing configuration
-            sed -i '/android {/a\
-          def keystoreProperties = new Properties()\
-          def keystorePropertiesFile = rootProject.file('\''key.properties'\'')\
-          if (keystorePropertiesFile.exists()) {\
-              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\
-          }' android/app/build.gradle
             
-            echo "Signing config added to build.gradle"
+            echo "HAS_SIGNING=true" >> $GITHUB_ENV
+          else
+            echo "No signing secrets found, will use debug signing"
+            echo "HAS_SIGNING=false" >> $GITHUB_ENV
           fi
 
       - name: Build APK
